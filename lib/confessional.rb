@@ -27,8 +27,20 @@ class EventDispatcher
   end
 
   def get_input
-    puts 'Program Started'
+    knock_the_door
     dialer_loop
+  end
+
+  private
+
+  def knock_the_door
+    puts 'Program Started'
+    2.times do |n|
+      Piface.write(n, 1)
+      sleep(0.5)
+      Piface.write(n, 0)
+      sleep(0.5)
+    end
   end
 
   def dialer_loop
@@ -46,17 +58,30 @@ class EventDispatcher
     end
   end
 
-  private
-
   def trigger_event_from_number(pulses)
     if @debug_mode
-      delete_all_records if pulses == 10
-      turn_off_debug_mode
+      trigger_debugger_event_from_number(pulses)
     else
-      start_playing if pulses == 3
-      start_recording if pulses == 10
-      start_debugging if pulses == 7
+      trigger_normal_event_from_number(pulses)
     end
+  end
+
+  def trigger_normal_event_from_number(pulses)
+    case pulses
+    when 3
+      start_playing
+    when 10
+      start_recording
+    when 7
+      start start_debugging
+    else
+      puts "unknown number - #{pulses}"
+    end
+  end
+
+  def trigger_debugger_event_from_number(pulses)
+    delete_all_records if pulses == 10
+    turn_off_debug_mode
   end
 
   def turn_off_debug_mode
@@ -118,9 +143,7 @@ class EventDispatcher
         @hangup_count += 1
         @been_used = false
       end
-      if @hangup_count == 10
-        turn_on_debug_mode
-      end
+      turn_on_debug_mode if @hangup_count == 10
       return true
     end
   end
@@ -182,7 +205,6 @@ class LightController
 end
 
 class Recorder
-
   def initialize
     @is_recording = false
     @process_id_array = []
@@ -234,10 +256,10 @@ end
 
 class Debugger
   def start_debugging
-    process_id = fork { debugger }
+    fork { debug_sound_cards }
   end
 
-  def debugger
+  def debug_sound_cards
     system('aplay -l')
     system('arecord -l')
     exit
@@ -258,7 +280,7 @@ class Player
 
   def kill_running_processes
     @process_id_array.each do |pid|
-      system('kill -9 #{pid}')
+      system("kill -9 #{pid}")
     end
     @process_id_array = []
   end
