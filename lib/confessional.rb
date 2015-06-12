@@ -14,7 +14,7 @@ class EventDispatcher
 
   def initialize
     @looper = Looper.new
-    @pulses = 0
+    @text_speaker = TextSpeaker.new
     @processes_running = false
     @number_dialed = false
     @hangup_count = 0
@@ -27,29 +27,20 @@ class EventDispatcher
   end
 
   def get_input
-    puts "Program Started"
-    get_physical_input
+    puts 'Program Started'
+    dialer_loop
   end
 
-  def get_physical_input
+  def dialer_loop
     loop do
       next if phone_is_off
       @been_used = true
       if phone_is_dialing
-        check_pulses
+        pulses = check_pulses
         @number_dialed = true
       end
-      if !phone_is_dialing && @number_dialed
-        puts @pulses
-        if @debug_mode
-          delete_all_records if @pulses >= 10
-          turn_off_debug_mode
-        else
-          start_playing if @pulses > 2 && @pulses <= 6
-          start_recording if @pulses >= 10
-          start_debugging if @pulses == 7
-        end
-        @pulses = 0
+      if @number_dialed && !phone_is_dialing && pulses
+        trigger_event_from_number(pulses)
         @number_dialed = false
       end
     end
@@ -57,39 +48,58 @@ class EventDispatcher
 
   private
 
+  def trigger_event_from_number(pulses)
+    if @debug_mode
+      delete_all_records if pulses == 10
+      turn_off_debug_mode
+    else
+      start_playing if pulses == 3
+      start_recording if pulses == 10
+      start_debugging if pulses == 7
+    end
+  end
+
   def turn_off_debug_mode
     @debug_mode = false
-    puts `espeak "debugger mode turned off"`
+    @text_speaker.speak('debugger mode turned off')
   end
 
   def turn_on_debug_mode
     @debug_mode = true
-    puts `espeak "debugging mode active"`
+    @text_speaker.speak('debugger mode active')
   end
 
   def delete_all_records
     while file = Dir.glob(PROGRAM_DIR + '/wavs/*.wav').sample
-      puts `rm #{file}`
+      system("rm #{file}")
     end
-    puts `espeak "all files have been deleted"`
+    @text_speaker.speak('all files have been deleted')
   end
 
   def check_memory
     space_left = `df -m /`.split(/\b/)[24].to_i
     while space_left < 200 && file = Dir.glob(PROGRAM_DIR + '/wavs/*.wav').sample
-      puts `rm #{file}`
+      system("rm #{file}")
       puts "FILE REMOVED - #{file}"
       space_left = `df -m /`.split(/\b/)[24].to_i
     end
   end
 
   def check_pulses
+    pulses = 0
+    input = 0
     while phone_is_dialing
-      if Piface.read(PULSE_SWITCH) == 0
-        @pulses += 1
-        @looper.loop_until_1(PULSE_SWITCH)
+      new_input = Piface.read(PULSE_SWITCH)
+      if new_input != input
+        sleep 0.01
+        new_input = Piface.read(PULSE_SWITCH)
+        if input == 0 && new_input == 1
+          pulses += 1
+        end
+        input = new_input
       end
     end
+    pulses - 1
   end
 
   def phone_is_dialing
@@ -117,9 +127,9 @@ class EventDispatcher
 
   def kill_running_processes
     broadcast(:kill_running_processes)
-    puts `killall -9 aplay`
-    puts `killall -9 espeak`
-    puts `killall -9 arecord`
+    system('killall -9 aplay')
+    system('killall -9 espeak')
+    system('killall -9 arecord')
     @processes_running = false
   end
 
@@ -181,6 +191,9 @@ class Recorder
       "You know what to do at the beep.",
       "I am a machine that offers forgiveness. Confess at the beep."
     ]
+    @wav_player = WavPlayer.new
+    @wav_recorder = WavRecorder.new
+    @text_speaker = TextSpeaker.new
   end
 
   def start_recording
@@ -190,20 +203,24 @@ class Recorder
 
   def kill_running_processes
     @process_id_array.each do |pid|
-      puts `kill -9 #{pid}`
+      system("kill -9 #{pid}")
     end
     @process_id_array = []
     @is_recording = false
   end
 
   def recorder
-    puts `espeak "#{random_priest_response}"`
-    beep = PROGRAM_DIR + '/wavs/beep/beep.wav'
-    puts `aplay -D hw:1,0 #{beep}`
+    @text_speaker.speak(random_priest_response)
+    play_beep
     file = PROGRAM_DIR + '/wavs/' + rand(1_000_000).to_s + '.wav'
-    puts `arecord -D hw:0,0 --format S16_LE --rate 44100 -d 60 -c1 "#{file}"`
-    puts `espeak "I'm sorry, your time is up"`
+    recorder = @wav_recorder.record(file)
+    @text_speaker.speak("I'm sorry your time is up") if recorder
     exit
+  end
+
+  def play_beep
+    beep = PROGRAM_DIR + '/wavs/beep/beep.wav'
+    @wav_player.play(beep)
   end
 
   def random_priest_response
@@ -221,8 +238,8 @@ class Debugger
   end
 
   def debugger
-    puts `aplay -l`
-    puts `arecord -l`
+    system('aplay -l')
+    system('arecord -l')
     exit
   end
 end
@@ -230,6 +247,9 @@ end
 class Player
   def initialize
     @process_id_array = []
+    @wav_player = WavPlayer.new
+    @text_speaker = TextSpeaker.new
+    @sorry_message = 'Sorry, something went wrong. Maybe try recording something first'
   end
 
   def start_playing
@@ -238,19 +258,33 @@ class Player
 
   def kill_running_processes
     @process_id_array.each do |pid|
-      puts `kill -9 #{pid}`
+      system('kill -9 #{pid}')
     end
     @process_id_array = []
   end
 
   def player
     file = Dir.glob(PROGRAM_DIR + '/wavs/*.wav').sample
-    if file
-      puts `aplay -D hw:1,0 #{file}`
-    else
-      puts `espeak "sorry, something went wrong"`
-    end
+    file ? @wav_player.play(file) : @text_speaker.speak(@sorry_message)
     exit
+  end
+end
+
+class WavPlayer
+  def play(file)
+    system("aplay -D hw:1,0 #{file}")
+  end
+end
+
+class WavRecorder
+  def record(file)
+    system("arecord -D hw:0,0 --format S16_LE --rate 44100 -d 60 -c1 #{file}")
+  end
+end
+
+class TextSpeaker
+  def speak(text)
+    system('espeak', text)
   end
 end
 
