@@ -9,6 +9,38 @@ DIALER_SWITCH = 6
 PULSE_SWITCH = 7
 PROGRAM_DIR = File.expand_path(File.join(File.dirname(__FILE__), '../'))
 
+class DialtoneGenerator
+  def initialize
+    @process_id_array = []
+    @wav_player = WavPlayer.new
+    @text_speaker = TextSpeaker.new
+    @random_responses = ['Hey buddy, are you gonna confess or what?',
+                         'Time to shit or get off the pot',
+                         'Tell me something juicy!',
+                         'Maybe you should hang up the phone',
+                         'La La La La La La']
+  end
+
+  def play_dialtone
+    @process_id_array << fork { loop_dialtone }
+  end
+
+  def loop_dialtone
+    loop do
+      dialtone = PROGRAM_DIR + '/wavs/beep/dialtone.wav'
+      @wav_player.play(dialtone)
+      @text_speaker.speak(@random_responses.sample)
+    end
+  end
+
+  def kill_running_processes
+    @process_id_array.each do |pid|
+      system("kill -9 #{pid}")
+    end
+    @process_id_array = []
+  end
+end
+
 class EventDispatcher
   include Wisper::Publisher
 
@@ -20,6 +52,8 @@ class EventDispatcher
     @hangup_count = 0
     @been_used = false
     @debug_mode = false
+    @dialtone_on = false
+    @saved_confession = nil
   end
 
   def setup
@@ -47,7 +81,12 @@ class EventDispatcher
     loop do
       next if phone_is_off
       @been_used = true
+      if @dialtone_on == false
+        broadcast(:play_dialtone)
+        @dialtone_on = true
+      end
       if phone_is_dialing
+        kill_running_processes
         pulses = check_pulses
       end
       if @number_dialed && !phone_is_dialing && pulses
@@ -71,11 +110,20 @@ class EventDispatcher
       start_playing
     when 10
       start_recording
+    when 5
+      save_last_played
+    when 7
+      play_saved
     when 7
       start start_debugging
     else
-      puts "unknown number - #{pulses}"
+      @text_speaker.speak('Sorry, I didnt quite get that, try again.
+                          Dial 3 or 0. Or maybe 5 or 7.')
     end
+  end
+
+  def save_last_played
+    start_process [:save_last_played]
   end
 
   def trigger_debugger_event_from_number(pulses)
@@ -133,9 +181,10 @@ class EventDispatcher
 
   def phone_is_off
     if Piface.read(PHONE_HOOK_SWITCH) == 0
+      kill_running_processes if @processes_running || @dialtone_on == true
+      @dialtone_on = false
       turn_off_debug_mode if @debug_mode
       if @processes_running
-        kill_running_processes
         @hangup_count = 1
       end
       check_memory
@@ -164,6 +213,10 @@ class EventDispatcher
     @processes_running = true
   end
 
+  def play_saved
+    start_process [:play_saved]
+  end
+
   def start_recording
     start_process [:start_recording, :start_lights]
   end
@@ -183,6 +236,7 @@ class EventDispatcher
     subscribe(Player.new)
     subscribe(Debugger.new)
     subscribe(LightController.new)
+    subscribe(DialtoneGenerator.new)
   end
 end
 
@@ -272,10 +326,28 @@ class Player
     @wav_player = WavPlayer.new
     @text_speaker = TextSpeaker.new
     @sorry_message = 'Sorry, something went wrong. Maybe try recording something first'
+    @last_played = nil
+    @saved_file = nil
   end
 
   def start_playing
-    @process_id_array << fork { player }
+    file = get_random_file
+    @process_id_array << fork { player(file) }
+    @last_played = file
+  end
+
+  def play_saved
+    file = @saved_file
+    if file
+      @process_id_array << fork { player(file) }
+    else
+      @text_speaker.speak('Sorry, nothing has been saved yet.')
+    end
+  end
+
+  def save_last_played
+    @saved_file = @last_played
+    @text_speaker.speak ('Okay, I saved it!')
   end
 
   def kill_running_processes
@@ -285,10 +357,14 @@ class Player
     @process_id_array = []
   end
 
-  def player
+  def get_random_file
     file = Dir.glob(PROGRAM_DIR + '/wavs/*.wav').sample
-    file ? @wav_player.play(file) : @text_speaker.speak(@sorry_message)
-    exit
+    @text_speaker.speak(@sorry_message) unless file
+    file
+  end
+
+  def player(file = nil)
+    @wav_player.play(file) if file
   end
 end
 
