@@ -49,11 +49,9 @@ class EventDispatcher
       @been_used = true
       if phone_is_dialing
         pulses = check_pulses
-        @number_dialed = true
       end
       if @number_dialed && !phone_is_dialing && pulses
         trigger_event_from_number(pulses)
-        @number_dialed = false
       end
     end
   end
@@ -64,6 +62,7 @@ class EventDispatcher
     else
       trigger_normal_event_from_number(pulses)
     end
+    @number_dialed = false
   end
 
   def trigger_normal_event_from_number(pulses)
@@ -111,6 +110,7 @@ class EventDispatcher
   end
 
   def check_pulses
+    @number_dialed = true
     pulses = 0
     input = 0
     while phone_is_dialing
@@ -179,10 +179,10 @@ class EventDispatcher
   private
 
   def do_subscriptions
-    self.subscribe(Recorder.new)
-    self.subscribe(Player.new)
-    self.subscribe(Debugger.new)
-    self.subscribe(LightController.new)
+    subscribe(Recorder.new)
+    subscribe(Player.new)
+    subscribe(Debugger.new)
+    subscribe(LightController.new)
   end
 end
 
@@ -209,9 +209,9 @@ class Recorder
     @is_recording = false
     @process_id_array = []
     @priest_responses = [
-      "Welcome, child. Please record your confession at the beep and hang up when you are finished.",
-      "You know what to do at the beep.",
-      "I am a machine that offers forgiveness. Confess at the beep."
+      'Welcome, child. Please record your confession at the beep and hang up when you are finished.',
+      'You know what to do at the beep.',
+      'I am a machine that offers forgiveness. Confess at the beep.'
     ]
     @wav_player = WavPlayer.new
     @wav_recorder = WavRecorder.new
@@ -306,10 +306,11 @@ end
 
 class TextSpeaker
   def speak(text)
-    system('espeak', text)
+    system("espeak -ven-uk -k5 -s150 '#{text}'")
   end
 end
 
+# Used for pausing program until circuit changes
 class Looper
   def loop_until_0(n)
     loop do
