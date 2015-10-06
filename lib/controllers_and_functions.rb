@@ -1,3 +1,4 @@
+# needs a dialtone and beep tone in the appropriate directories
 
 # Controller for LEDs
 class LightController

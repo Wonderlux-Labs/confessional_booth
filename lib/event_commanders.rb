@@ -91,4 +91,3 @@ class ProcessKiller
     false
   end
 end
-
